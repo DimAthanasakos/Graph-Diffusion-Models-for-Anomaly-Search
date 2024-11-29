@@ -1,0 +1,15 @@
+{
+    'NUM_FEAT':3,
+    'NUM_JET':5,
+    'NUM_COND':1,
+    'BATCH':128,
+    'LR':0.0003,
+    'MAXEPOCH':300,
+    'EARLYSTOP':20,
+    'EMBED':64,
+    'MAX_STEPS':512,
+    'NORM':'mean',
+    'MJJMAX':5000,
+    'MJJMIN':2300,
+    'MODEL_NAME':'FPCD_LHCO'
+}
