@@ -1,4 +1,5 @@
 import numpy as np
+import yaml
 import matplotlib.pyplot as plt
 import argparse
 import h5py as h5
@@ -12,7 +13,7 @@ import sys
 from plot_class import PlottingConfig
 
 def get_mjj(particle,jet):
-    #Recover the particle information
+    # Recover the particle information
     
     new_p = np.copy(particle)
     new_p[:,:,:,0]*=np.expand_dims(jet[:,:,0],-1)
@@ -71,11 +72,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data_folder', default='/global/cfs/cdirs/m3929/LHCO/', help='Folder containing data and MC files')    
+    parser.add_argument('--data_folder', default='/pscratch/sd/d/dimathan/LHCO/Data', help='Folder containing data and MC files')    
     parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
     parser.add_argument('--file_name', default='processed_data_background_rel.h5', help='File to load')
     parser.add_argument('--npart', default=279, type=int, help='Maximum number of particles')
-    parser.add_argument('--config', default='config_jet.json', help='Training parameters')
+    parser.add_argument('--config', default='config.yaml', help='Training parameters')
     parser.add_argument('--nsplit', default=20,type = int, help='Number of batches to generate')
     
     parser.add_argument('--sample', action='store_true', default=False,help='Sample from the generative model')
@@ -84,7 +85,8 @@ if __name__ == "__main__":
     parser.add_argument('--hamb', action='store_true', default=False,help='Load hamburg team files')
 
     flags = parser.parse_args()
-    config = utils.LoadJson(flags.config)
+    with open(flags.config, 'r') as stream:
+        config = yaml.safe_load(stream)
 
     model_name = config['MODEL_NAME']
     sample_name = model_name
@@ -92,19 +94,26 @@ if __name__ == "__main__":
         sample_name += '_SR'
     if flags.hamb:
         sample_name += '_Hamburg'
-    
-    particles,jets,logmjj,_ = utils.DataLoader(flags.data_folder,
+    n_events_sample = config['n_events_sample']
+
+    particles, jets, logmjj, _ = utils.DataLoader(flags.data_folder,
                                                flags.file_name,
                                                npart=flags.npart,
+                                               n_events = config['n_events'],
+                                               n_events_sample = n_events_sample, 
                                                norm=config['NORM'],
                                                make_tf_data=False,use_SR=flags.SR)
-    
-        
+    print('After Loading')
+    print(f'particles shape: {particles.shape}')
+    print(f'jet shape: {jets.shape}')
+    print(f'logmjj shape: {logmjj.shape}')
+    print() 
+
     if flags.test:
-        particles_gen,jets_gen,mjj_gen = utils.SimpleLoader(flags.data_folder,
-                                                            flags.file_name,
-                                                            use_SR=flags.SR,
-                                                            npart=flags.npart)
+        particles_gen, jets_gen, mjj_gen = utils.SimpleLoader(flags.data_folder,
+                                                              flags.file_name,
+                                                              use_SR=flags.SR,
+                                                              npart=flags.npart)
     else:        
         if flags.sample:            
             model = GSGM(config=config,npart=flags.npart)
@@ -117,26 +126,28 @@ if __name__ == "__main__":
             if flags.SR:
                 logmjj = utils.LoadMjjFile(flags.data_folder,'generated_data_all_200k.h5',use_SR=flags.SR)[:200000]
     
-            
-            for i,split in enumerate(np.array_split(logmjj,flags.nsplit)):
-                #if i>2:break
+
+            for i,split in enumerate(np.array_split(logmjj, flags.nsplit)):     
+                if split.size == 0: break                                       # if split is empty  
                 p,j = model.generate(split)
+                print(f'logmjj: {split}')
+                print(f'm = {utils.revert_mjj(split)}')
+                m = get_mjj(p, j)
+                print(f'm_gen = {m}')
                 particles_gen.append(p)
                 jets_gen.append(j)
     
             particles_gen = np.concatenate(particles_gen)
             jets_gen = np.concatenate(jets_gen)
             
-            particles_gen,jets_gen= utils.ReversePrep(particles_gen,
+            particles_gen, jets_gen= utils.ReversePrep(particles_gen,
                                                       jets_gen,
                                                       mjj = utils.revert_mjj(logmjj),
                                                       npart=flags.npart,
-                                                      norm=config['NORM'],
-                                                      
-                                                  
-            )
+                                                      norm=config['NORM'], )
 
             mjj_gen = utils.revert_mjj(logmjj)
+
             with h5.File(os.path.join(flags.data_folder,sample_name+'.h5'),"w") as h5f:
                 dset = h5f.create_dataset("particle_features", data=particles_gen)
                 dset = h5f.create_dataset("jet_features", data=jets_gen)
@@ -160,14 +171,40 @@ if __name__ == "__main__":
                 jets_gen = h5f['jet_features'][:]
                 particles_gen = h5f['particle_features'][:]
                 mjj_gen = h5f['mjj'][:]
+    
+    print()
+    print(f'particles shape: {particles.shape}')
+    print(f'jet shape: {jets.shape}')
 
-    particles,jets= utils.ReversePrep(particles,jets,mjj = utils.revert_mjj(logmjj),
-                                      npart=flags.npart,norm=config['NORM'])
+    particles, jets= utils.ReversePrep(particles,jets,mjj = utils.revert_mjj(logmjj),
+                                       npart=flags.npart, norm=config['NORM'])
+    # compare mjj_gen with get_mjj(particles_gen, jets_gen)
+    mjj_gen_true = get_mjj(particles_gen, jets_gen)
+    mjj_original = get_mjj(particles, jets)
 
+
+    print()
+
+    print(f'mjj_gen shape: {mjj_gen.shape}')
+    print(f'mjj_gen_true shape: {mjj_gen_true.shape}')
+    print(f'mjj_gen[:20]: {mjj_gen[:20]}')
+    print(f'mjj_gen_true[:20]: {mjj_gen_true[:20]}')
+    print()
+    #print(f'mjj_original[:10]: {mjj_original[:10]}')
+
+    print(f'mjj_gen - mjj_gen_true difference for each jet in the first 10 events: {mjj_gen[:20] - mjj_gen_true[:20]}')
+    print(f'mjj_gen - mjj_original difference for each jet in the first 10 events: {mjj_gen[:20] - mjj_original[:20]}')
+    print()
+
+    print()
+    print(f'particles shape: {particles.shape}')
+    print(f'jet shape: {jets.shape}')
+    print(f'particles_gen shape: {particles_gen.shape}')
+    print(f'jet_gen shape: {jets_gen.shape}')
 
     feed_dict = {
-        'true':get_mjj(particles,jets),
-        'gen': get_mjj(particles_gen,jets_gen)
+        'true': get_mjj(particles, jets),
+        'gen':  get_mjj(particles_gen, jets_gen)
     }
     
     fig,gs,_ = utils.HistRoutine(feed_dict,xlabel="mjj GeV",

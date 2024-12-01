@@ -34,10 +34,6 @@ class GSGM(keras.Model):
         # self.train_jet = True #Train only the jet generation first before training the particle generation
         
         
-                
-        #self.verbose = 1 if hvd.rank() == 0 else 0 #show progress only for first rank
-
-        
         self.projection = self.GaussianFourierProjection(scale = 16)
         self.loss_tracker = keras.metrics.Mean(name="loss")
 
@@ -307,8 +303,9 @@ class GSGM(keras.Model):
         jets = self.DDPMSampler(cond,self.ema_jet,
                                 data_shape=[cond.shape[0],2,self.num_jet],
                                 const_shape = self.shape).numpy()
-        # end = time.time()
-        # print("Time for sampling {} events is {} seconds".format(cond.shape[0],end - start))
+        
+        #print(f"Shape of cond: {cond.shape}")
+        #print(f"Shape of jets: {jets.shape}")
 
         particles = []
         for ijet in range(2):
@@ -332,6 +329,7 @@ class GSGM(keras.Model):
             particles.append(parts*mask)
             # parts = np.ones(shape=(cond.shape[0],self.max_part,3))
         end = time.time()
+
         print("Time for sampling {} events is {} seconds".format(cond.shape[0],end - start))
 
             

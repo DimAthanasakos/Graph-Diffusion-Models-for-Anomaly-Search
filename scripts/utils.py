@@ -1,5 +1,6 @@
 import json, yaml
 import os
+import time
 import h5py as h5
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,7 +43,6 @@ def get_mjj_mask(mjj,use_SR,mjjmin,mjjmax):
         mask_region = (mjj>3300) & (mjj<3700)
     else:
         mask_region = ((mjj<3300) & (mjj>mjjmin)) | ((mjj>3700) & (mjj<mjjmax))
-        #mask_region = (mjj<3300)  | (mjj>3700) 
     return mask_region
 
 def SetStyle():
@@ -152,7 +152,7 @@ def HistRoutine(feed_dict,
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
 
     if fig is None:
-        fig,gs = SetGrid(plot_ratio) 
+        fig, gs = SetGrid(plot_ratio) 
     ax0 = plt.subplot(gs[0])
     if plot_ratio:
         plt.xticks(fontsize=0)
@@ -191,7 +191,7 @@ def HistRoutine(feed_dict,
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0)
     
-    return fig,gs, binning
+    return fig, gs, binning
 
 
 def LoadJson(file_name):
@@ -213,6 +213,12 @@ def SimpleLoader(data_path,file_name,use_SR=False,
         jets = h5f['jet_data'][:]
         mask = h5f['mask'][:]
         particles = np.concatenate([particles,mask],-1)
+
+    print()
+    print('SimpleLoader')
+    print(f'Particles shape: {particles.shape}')
+    print(f'Jets shape: {jets.shape}')
+    print()
 
 
     if not use_SR:
@@ -318,6 +324,8 @@ def prep_mjj(mjj,mjjmin=2300,mjjmax=5000):
     
 def DataLoader(data_path,file_name,
                npart,
+               n_events,
+               n_events_sample = 1000,
                rank=0,size=1,
                batch_size=64,
                make_tf_data=True,
@@ -382,11 +390,19 @@ def DataLoader(data_path,file_name,
     
             
     with h5.File(os.path.join(data_path,file_name),"r") as h5f:
-        nevts = h5f['jet_data'][:].shape[0]
-        particles = h5f['constituents'][:]
-        jets = h5f['jet_data'][:]
-        mask = h5f['mask'][:]
+        nevts = min(n_events, h5f['jet_data'][:].shape[0])          # number of events
+        particles = h5f['constituents'][:nevts]
+        jets = h5f['jet_data'][:nevts]
+        mask = h5f['mask'][:nevts]
         particles = np.concatenate([particles,mask],-1)
+
+    # print the analytics of the data
+    if rank == 0:
+        print(f'nevts: {nevts}')
+        print(f'Particles shape: {particles.shape}')
+        print(f'Jets shape: {jets.shape}')
+        print(f'Mask shape: {mask.shape}')
+        print()
 
 
     p4_jets = ef.p4s_from_ptyphims(jets)
@@ -394,9 +410,14 @@ def DataLoader(data_path,file_name,
     sum_p4 = p4_jets[:, 0] + p4_jets[:, 1]
     mjj = ef.ms_from_p4s(sum_p4)
     jets = np.concatenate([jets,np.sum(mask,-2)],-1)
+
     # train using only the sidebands
-    mask_region = get_mjj_mask(mjj,use_SR,mjjmin,mjjmax)
-    mask_mass = (np.abs(jets[:,0,0])>0.0) & (np.abs(jets[:,1,0])>0.0)
+    mask_region = get_mjj_mask(mjj,use_SR,mjjmin,mjjmax)              # Only events in the sideband region (~80% of the events)
+    mask_mass = (np.abs(jets[:,0,0])>0.0) & (np.abs(jets[:,1,0])>0.0) # Both jet have non-zero p_T (not zero padded events)
+
+    # how many events outside mask_region and mask_mass
+    #print(f'Number of events outside mask_region: {np.sum(~mask_region)}')
+    #print()
 
     particles = particles[(mask_region) & (mask_mass)]
     mjj = mjj[(mask_region) & (mask_mass)]
@@ -404,22 +425,21 @@ def DataLoader(data_path,file_name,
     jets[:,:,-1][jets[:,:,-1]<0] = 0.
 
     if make_tf_data:
-        particles = particles[rank:int(0.65*nevts):size]
-        jets = jets[rank:int(0.65*nevts):size]
-        mjj = mjj[rank:int(0.65*nevts):size]
+        particles = particles[rank:int(0.65*nevts):size] # this does a uniform split of the data for each GPU (rank)
+        jets = jets[rank:int(0.65*nevts):size]           # rank 0 gets data: 0, size, 2*size, 3*size, ...
+        mjj = mjj[rank:int(0.65*nevts):size]             # rank 1 gets data: 1, size+1, 2*size+1, 3*size+1, ...
     else:
         if not use_SR:
             particles = particles[int(0.65*nevts):]
             jets = jets[int(0.65*nevts):]
             mjj = mjj[int(0.65*nevts):]
-            
-    
-    particles,jets,mjj = shuffle(particles,jets,mjj, random_state=0)
+
+    particles, jets, mjj = shuffle(particles,jets,mjj, random_state=0)
     data_size = jets.shape[0]
 
     particles,jets = _preprocessing(particles,jets,mjj)
-    
-    #normalize mjj to range [-1,1]
+
+    # Normalize mjj to range [-1,1]
     mjj = prep_mjj(mjj,mjjmin,mjjmax)
     
     # input("done")
@@ -450,9 +470,10 @@ def DataLoader(data_path,file_name,
         train_data = _prepare_batches(train_particles,train_jets,train_mjj)
         test_data  = _prepare_batches(test_particles,test_jets,test_mjj)
 
-        return data_size, train_data,test_data
+        return data_size, train_data, test_data
     
-    else:
-        nevts = 200000
-        mask = np.expand_dims(particles[:nevts,:,:,-1],-1)
-        return particles[:nevts,:,:,:-1]*mask,jets[:nevts],mjj[:nevts], mask
+    else: # sampling ??
+        print(f'sampling data ? ?? ')
+        #n_events_sample = 1000000
+        mask = np.expand_dims(particles[:n_events_sample,:,:,-1],-1)
+        return particles[:n_events_sample,:,:,:-1]*mask, jets[:n_events_sample], mjj[:n_events_sample], mask

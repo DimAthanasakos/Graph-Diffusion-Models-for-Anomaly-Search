@@ -1,4 +1,5 @@
 import numpy as np
+import yaml
 import os,re
 import tensorflow as tf
 from tensorflow import keras
@@ -24,26 +25,29 @@ if __name__ == "__main__":
 
 
     parser = argparse.ArgumentParser()    
-    parser.add_argument('--config', default='config_jet.json', help='Config file with training parameters')
+    parser.add_argument('--config', default='config.yaml', help='Config file with training parameters')
     parser.add_argument('--file_name', default='processed_data_background_rel.h5', help='File to load')
     parser.add_argument('--npart', default=279, type=int, help='Maximum number of particles')
-    parser.add_argument('--data_path', default='/global/cfs/cdirs/m3929/LHCO/', help='Path containing the training files')
+    parser.add_argument('--data_path', default='/pscratch/sd/d/dimathan/LHCO/Data', help='Path containing the training files')
     parser.add_argument('--load', action='store_true', default=False,help='Load trained model')
 
 
-
     flags = parser.parse_args()
-    config = utils.LoadJson(flags.config)
-
+    with open(flags.config, 'r') as stream:
+        config = yaml.safe_load(stream)
+      
     
-    data_size,training_data,test_data = utils.DataLoader(flags.data_path,
-                                                         flags.file_name,
-                                                         flags.npart,
-                                                         hvd.rank(),hvd.size(),
-                                                         config['BATCH'],norm=config['NORM'])
+    data_size, training_data, test_data = utils.DataLoader(flags.data_path,
+                                                           flags.file_name,
+                                                           flags.npart,
+                                                           n_events = config['n_events'],
+                                                           rank = hvd.rank(), 
+                                                           size= hvd.size(),
+                                                           batch_size = config['BATCH'],
+                                                           norm=config['NORM'])
 
     model = GSGM(config=config,npart=flags.npart)
-
+ 
     model_name = config['MODEL_NAME']
     checkpoint_folder = '../checkpoints_{}/checkpoint'.format(model_name)
         
@@ -79,7 +83,8 @@ if __name__ == "__main__":
     if hvd.rank()==0:
         checkpoint = ModelCheckpoint(checkpoint_folder,mode='auto',
                                      save_best_only=True,
-                                     period=1,save_weights_only=True)
+                                     save_weights_only=True, 
+                                     save_freq='epoch',)  # Save after each epoch
         callbacks.append(checkpoint)
         
     
