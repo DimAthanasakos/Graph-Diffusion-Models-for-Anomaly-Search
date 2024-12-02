@@ -318,7 +318,6 @@ class GSGM(keras.Model):
         
             assert np.sum(np.sum(mask.reshape(mask.shape[0],-1),-1,keepdims=True)-nparts)==0, 'ERROR: Particle mask does not match the expected number of particles'
 
-            #start = time.time()
             parts = self.DDPMSampler(tf.convert_to_tensor(cond,dtype=tf.float32),
                                      self.ema_part,
                                      data_shape=[cond.shape[0],self.max_part,self.num_feat],
@@ -331,7 +330,6 @@ class GSGM(keras.Model):
         end = time.time()
 
         print("Time for sampling {} events is {} seconds".format(cond.shape[0],end - start))
-
             
         return np.stack(particles,1),jets
 

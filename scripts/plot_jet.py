@@ -44,7 +44,7 @@ def plot(jet1,jet2,nplots,title,plot_folder):
             
 
         fig,gs,_ = utils.HistRoutine(feed_dict,xlabel=config.var,
-                                     binning=config.binning,
+                                     #binning=config.binning,
                                      plot_ratio=True,
                                      reference_name='true',
                                      ylabel= 'Normalized entries',logy=config.logy)
@@ -87,6 +87,11 @@ if __name__ == "__main__":
     flags = parser.parse_args()
     with open(flags.config, 'r') as stream:
         config = yaml.safe_load(stream)
+    
+    # create the plot folder if it does not exist
+    if not os.path.exists(flags.plot_folder):
+        os.makedirs(flags.plot_folder)
+        print(f'Created folder {flags.plot_folder}')
 
     model_name = config['MODEL_NAME']
     sample_name = model_name
@@ -106,7 +111,6 @@ if __name__ == "__main__":
     print('After Loading')
     print(f'particles shape: {particles.shape}')
     print(f'jet shape: {jets.shape}')
-    print(f'logmjj shape: {logmjj.shape}')
     print() 
 
     if flags.test:
@@ -129,14 +133,23 @@ if __name__ == "__main__":
 
             for i,split in enumerate(np.array_split(logmjj, flags.nsplit)):     
                 if split.size == 0: break                                       # if split is empty  
+                print(f'Generating split {i+1}/{flags.nsplit}')
                 p,j = model.generate(split)
-                print(f'logmjj: {split}')
-                print(f'm = {utils.revert_mjj(split)}')
-                m = get_mjj(p, j)
-                print(f'm_gen = {m}')
                 particles_gen.append(p)
                 jets_gen.append(j)
-    
+                #print(f'logmjj: {split}')
+                print(f'm = {utils.revert_mjj(split)}')
+                p_aux, j_aux = utils.ReversePrep(p,j,mjj = utils.revert_mjj(split), npart=flags.npart, norm=config['NORM'])
+                mjj_aux = get_mjj(p_aux,j_aux)
+                print(f'mjj: {mjj_aux}')
+                # check how many events are in the signal region, i.e. 3300 < mjj < 3700
+                sr_events = np.sum((mjj_aux >= 3300) & (mjj_aux <= 3700) )
+                sb_events = np.sum( ( (mjj_aux < 3300) & (mjj_aux > 2300 ) ) | ((mjj_aux > 3700) & (mjj_aux < 5000) ) ) 
+                print(f'# of events in the signal region: {sr_events}/{len(mjj_aux)}')
+                print(f'# of events in the side band: {sb_events}/{len(mjj_aux)}')
+                print()
+
+
             particles_gen = np.concatenate(particles_gen)
             jets_gen = np.concatenate(jets_gen)
             
@@ -145,9 +158,23 @@ if __name__ == "__main__":
                                                       mjj = utils.revert_mjj(logmjj),
                                                       npart=flags.npart,
                                                       norm=config['NORM'], )
+            mjj_created = get_mjj(particles_gen, jets_gen)
+            print(f'mjj_created[:20]: {mjj_created[:20]}')
 
+            # WARNING: VM named it mjj_gen, but it is not the generated mjj, it is the ORIGINAL mjj that's used as a condition for the generation
             mjj_gen = utils.revert_mjj(logmjj)
+            
+            only_SB = True  
+            if only_SB:
+                mask_region = utils.get_mjj_mask(mjj_created, flags.SR, mjjmin = config['MJJMIN'], mjjmax = config['MJJMAX'])
+                passed = np.sum(mask_region)
+                print('Keeping only SideBand Events')
+                print(f'# of Generated Events In the SideBand: {passed}/{len(mask_region)}')
+                particles_gen = particles_gen[mask_region]
+                jets_gen = jets_gen[mask_region]
+                mjj_created = mjj_created[mask_region]
 
+            
             with h5.File(os.path.join(flags.data_folder,sample_name+'.h5'),"w") as h5f:
                 dset = h5f.create_dataset("particle_features", data=particles_gen)
                 dset = h5f.create_dataset("jet_features", data=jets_gen)
@@ -166,7 +193,7 @@ if __name__ == "__main__":
 
                 mjj_gen = h5f['mjj'][:]
                 
-        else:
+        else:  # if the sample flag is False, load from the generated file
             with h5.File(os.path.join(flags.data_folder,sample_name+'.h5'),"r") as h5f:
                 jets_gen = h5f['jet_features'][:]
                 particles_gen = h5f['particle_features'][:]
@@ -178,29 +205,7 @@ if __name__ == "__main__":
 
     particles, jets= utils.ReversePrep(particles,jets,mjj = utils.revert_mjj(logmjj),
                                        npart=flags.npart, norm=config['NORM'])
-    # compare mjj_gen with get_mjj(particles_gen, jets_gen)
-    mjj_gen_true = get_mjj(particles_gen, jets_gen)
-    mjj_original = get_mjj(particles, jets)
 
-
-    print()
-
-    print(f'mjj_gen shape: {mjj_gen.shape}')
-    print(f'mjj_gen_true shape: {mjj_gen_true.shape}')
-    print(f'mjj_gen[:20]: {mjj_gen[:20]}')
-    print(f'mjj_gen_true[:20]: {mjj_gen_true[:20]}')
-    print()
-    #print(f'mjj_original[:10]: {mjj_original[:10]}')
-
-    print(f'mjj_gen - mjj_gen_true difference for each jet in the first 10 events: {mjj_gen[:20] - mjj_gen_true[:20]}')
-    print(f'mjj_gen - mjj_original difference for each jet in the first 10 events: {mjj_gen[:20] - mjj_original[:20]}')
-    print()
-
-    print()
-    print(f'particles shape: {particles.shape}')
-    print(f'jet shape: {jets.shape}')
-    print(f'particles_gen shape: {particles_gen.shape}')
-    print(f'jet_gen shape: {jets_gen.shape}')
 
     feed_dict = {
         'true': get_mjj(particles, jets),
@@ -208,7 +213,7 @@ if __name__ == "__main__":
     }
     
     fig,gs,_ = utils.HistRoutine(feed_dict,xlabel="mjj GeV",
-                                 binning=np.linspace(2800,4200,100),
+                                 binning=np.linspace(2300,5000,54),
                                  plot_ratio=True,
                                  reference_name='true',
                                  ylabel= 'Normalized entries',logy=True)

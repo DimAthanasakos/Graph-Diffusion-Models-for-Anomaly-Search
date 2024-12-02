@@ -160,7 +160,7 @@ def HistRoutine(feed_dict,
         
     
     if binning is None:
-        binning = np.linspace(np.quantile(feed_dict[reference_name],0.0),np.quantile(feed_dict[reference_name],1),20)
+        binning = np.linspace(np.quantile(feed_dict[reference_name],0.0),np.quantile(feed_dict[reference_name],1),30)
         
     xaxis = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
     reference_hist,_ = np.histogram(feed_dict[reference_name],bins=binning,density=True)
@@ -397,12 +397,12 @@ def DataLoader(data_path,file_name,
         particles = np.concatenate([particles,mask],-1)
 
     # print the analytics of the data
-    if rank == 0:
-        print(f'nevts: {nevts}')
-        print(f'Particles shape: {particles.shape}')
-        print(f'Jets shape: {jets.shape}')
-        print(f'Mask shape: {mask.shape}')
-        print()
+    #if rank == 0:
+    #    print(f'nevts: {nevts}')
+    #    print(f'Particles shape: {particles.shape}')
+    #    print(f'Jets shape: {jets.shape}')
+    #    print(f'Mask shape: {mask.shape}')
+    #    print()
 
 
     p4_jets = ef.p4s_from_ptyphims(jets)
