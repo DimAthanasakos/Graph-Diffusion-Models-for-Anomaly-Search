@@ -83,6 +83,7 @@ if __name__ == "__main__":
     parser.add_argument('--test', action='store_true', default=False,help='Test if inverse transform returns original data')
     parser.add_argument('--SR', action='store_true', default=False,help='Load signal region background events')
     parser.add_argument('--hamb', action='store_true', default=False,help='Load hamburg team files')
+    parser.add_argument('--large', action='store_true', default=False,help='Train with a large model')
 
     flags = parser.parse_args()
     with open(flags.config, 'r') as stream:
@@ -94,6 +95,9 @@ if __name__ == "__main__":
         print(f'Created folder {flags.plot_folder}')
 
     model_name = config['MODEL_NAME']
+    if flags.large:
+        model_name+='_large'
+
     sample_name = model_name
     if flags.SR:
         sample_name += '_SR'
@@ -108,6 +112,7 @@ if __name__ == "__main__":
                                                n_events_sample = n_events_sample, 
                                                norm=config['NORM'],
                                                make_tf_data=False,use_SR=flags.SR)
+    
     print('After Loading')
     print(f'particles shape: {particles.shape}')
     print(f'jet shape: {jets.shape}')
@@ -138,10 +143,14 @@ if __name__ == "__main__":
                 particles_gen.append(p)
                 jets_gen.append(j)
                 #print(f'logmjj: {split}')
-                print(f'm = {utils.revert_mjj(split)}')
+                #mjj = utils.revert_mjj(split)
+                #print(f'mjj[:10] = {mjj[:10]}')
                 p_aux, j_aux = utils.ReversePrep(p,j,mjj = utils.revert_mjj(split), npart=flags.npart, norm=config['NORM'])
                 mjj_aux = get_mjj(p_aux,j_aux)
-                print(f'mjj: {mjj_aux}')
+                #print(f'mjj_aux[:10]: {mjj_aux[:10]}')
+                # print the difference between the generated mjj and the original mjj
+                #dmjj = (mjj_aux - mjj)/mjj
+                #print(f'dmjj[:10]: {dmjj[:10]}')
                 # check how many events are in the signal region, i.e. 3300 < mjj < 3700
                 sr_events = np.sum((mjj_aux >= 3300) & (mjj_aux <= 3700) )
                 sb_events = np.sum( ( (mjj_aux < 3300) & (mjj_aux > 2300 ) ) | ((mjj_aux > 3700) & (mjj_aux < 5000) ) ) 
@@ -159,12 +168,12 @@ if __name__ == "__main__":
                                                       npart=flags.npart,
                                                       norm=config['NORM'], )
             mjj_created = get_mjj(particles_gen, jets_gen)
-            print(f'mjj_created[:20]: {mjj_created[:20]}')
 
             # WARNING: VM named it mjj_gen, but it is not the generated mjj, it is the ORIGINAL mjj that's used as a condition for the generation
             mjj_gen = utils.revert_mjj(logmjj)
             
-            only_SB = True  
+            # keep only the events in the SB region
+            only_SB = False  
             if only_SB:
                 mask_region = utils.get_mjj_mask(mjj_created, flags.SR, mjjmin = config['MJJMIN'], mjjmax = config['MJJMAX'])
                 passed = np.sum(mask_region)

@@ -40,9 +40,9 @@ def reweight(data_j,data_p,model,mjj):
 
 def get_mjj_mask(mjj,use_SR,mjjmin,mjjmax):
     if use_SR:
-        mask_region = (mjj>3300) & (mjj<3700)
+        mask_region = (mjj>=3300) & (mjj<=3700)
     else:
-        mask_region = ((mjj<3300) & (mjj>mjjmin)) | ((mjj>3700) & (mjj<mjjmax))
+        mask_region = ((mjj<=3300) & (mjj>=mjjmin)) | ((mjj>=3700) & (mjj<=mjjmax))
     return mask_region
 
 def SetStyle():
@@ -325,7 +325,7 @@ def prep_mjj(mjj,mjjmin=2300,mjjmax=5000):
 def DataLoader(data_path,file_name,
                npart,
                n_events,
-               n_events_sample = 1000,
+               n_events_sample = 500,
                rank=0,size=1,
                batch_size=64,
                make_tf_data=True,

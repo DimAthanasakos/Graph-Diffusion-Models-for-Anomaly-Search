@@ -1,6 +1,8 @@
 import numpy as np
 import yaml
 import os,re
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+print()
 import tensorflow as tf
 from tensorflow import keras
 import time
@@ -30,7 +32,7 @@ if __name__ == "__main__":
     parser.add_argument('--npart', default=279, type=int, help='Maximum number of particles')
     parser.add_argument('--data_path', default='/pscratch/sd/d/dimathan/LHCO/Data', help='Path containing the training files')
     parser.add_argument('--load', action='store_true', default=False,help='Load trained model')
-
+    parser.add_argument('--large', action='store_true', default=False,help='Train with a large model')
 
     flags = parser.parse_args()
     with open(flags.config, 'r') as stream:
@@ -49,6 +51,8 @@ if __name__ == "__main__":
     model = GSGM(config=config,npart=flags.npart)
  
     model_name = config['MODEL_NAME']
+    if flags.large:
+        model_name+='_large'
     checkpoint_folder = '../checkpoints_{}/checkpoint'.format(model_name)
         
         
@@ -95,7 +99,7 @@ if __name__ == "__main__":
         steps_per_epoch=int(data_size/config['BATCH']),
         validation_data=test_data,
         validation_steps=int(data_size*0.1/config['BATCH']),
-        verbose=1 if hvd.rank()==0 else 0,
+        verbose=2 if hvd.rank()==0 else 0,
         #steps_per_epoch=1,
     )
 
