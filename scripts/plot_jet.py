@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import argparse
 import h5py as h5
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import utils
 import tensorflow as tf
 from GSGM_lhco import GSGM
@@ -106,13 +107,14 @@ if __name__ == "__main__":
     n_events_sample = config['n_events_sample']
 
     particles, jets, logmjj, _ = utils.DataLoader(flags.data_folder,
-                                               flags.file_name,
-                                               npart=flags.npart,
-                                               n_events = config['n_events'],
-                                               n_events_sample = n_events_sample, 
-                                               norm=config['NORM'],
-                                               make_tf_data=False,use_SR=flags.SR)
+                                                 flags.file_name,
+                                                 npart=flags.npart,
+                                                 n_events = config['n_events'],
+                                                 n_events_sample = n_events_sample, 
+                                                 norm=config['NORM'],
+                                                 make_tf_data=False,use_SR=flags.SR)
     
+
     print('After Loading')
     print(f'particles shape: {particles.shape}')
     print(f'jet shape: {jets.shape}')
@@ -133,24 +135,18 @@ if __name__ == "__main__":
             jets_gen = []
 
             if flags.SR:
-                logmjj = utils.LoadMjjFile(flags.data_folder,'generated_data_all_200k.h5',use_SR=flags.SR)[:200000]
-    
+                logmjj_g = utils.LoadMjjFile(flags.data_folder,'generated_data_all_200k.h5',use_SR=flags.SR)[:n_events_sample]
+            else: 
+                logmjj_g = logmjj
 
-            for i,split in enumerate(np.array_split(logmjj, flags.nsplit)):     
-                if split.size == 0: break                                       # if split is empty  
+            for i,split in enumerate(np.array_split(logmjj_g, flags.nsplit)):     # split the logmjj_g array into nsplit batches. Each GPU can only hold ~100 events
+                if split.size == 0: break                                         # if split is empty  
                 print(f'Generating split {i+1}/{flags.nsplit}')
                 p,j = model.generate(split)
                 particles_gen.append(p)
                 jets_gen.append(j)
-                #print(f'logmjj: {split}')
-                #mjj = utils.revert_mjj(split)
-                #print(f'mjj[:10] = {mjj[:10]}')
                 p_aux, j_aux = utils.ReversePrep(p,j,mjj = utils.revert_mjj(split), npart=flags.npart, norm=config['NORM'])
                 mjj_aux = get_mjj(p_aux,j_aux)
-                #print(f'mjj_aux[:10]: {mjj_aux[:10]}')
-                # print the difference between the generated mjj and the original mjj
-                #dmjj = (mjj_aux - mjj)/mjj
-                #print(f'dmjj[:10]: {dmjj[:10]}')
                 # check how many events are in the signal region, i.e. 3300 < mjj < 3700
                 sr_events = np.sum((mjj_aux >= 3300) & (mjj_aux <= 3700) )
                 sb_events = np.sum( ( (mjj_aux < 3300) & (mjj_aux > 2300 ) ) | ((mjj_aux > 3700) & (mjj_aux < 5000) ) ) 
@@ -162,16 +158,16 @@ if __name__ == "__main__":
             particles_gen = np.concatenate(particles_gen)
             jets_gen = np.concatenate(jets_gen)
             
-            particles_gen, jets_gen= utils.ReversePrep(particles_gen,
-                                                      jets_gen,
-                                                      mjj = utils.revert_mjj(logmjj),
-                                                      npart=flags.npart,
-                                                      norm=config['NORM'], )
-            mjj_created = get_mjj(particles_gen, jets_gen)
+            particles_gen, jets_gen = utils.ReversePrep(particles_gen,
+                                                        jets_gen,
+                                                        mjj = utils.revert_mjj(logmjj_g), # we pass logmjj_g in order to scale the generated particles and jets properly
+                                                        npart=flags.npart,
+                                                        norm=config['NORM'], )
+            mjj_created = get_mjj(particles_gen, jets_gen) # this does not equal mjj_gen, since it is calculated from the generated particles and jets
 
-            # WARNING: VM named it mjj_gen, but it is not the generated mjj, it is the ORIGINAL mjj that's used as a condition for the generation
-            mjj_gen = utils.revert_mjj(logmjj)
-            
+            # WARNING: VM named it mjj_gen, but it is not the generated (created) mjj, it is the mjj that's used as a condition for the generation
+            mjj_gen = utils.revert_mjj(logmjj_g)
+
             # keep only the events in the SB region
             only_SB = False  
             if only_SB:
@@ -212,24 +208,25 @@ if __name__ == "__main__":
     print(f'particles shape: {particles.shape}')
     print(f'jet shape: {jets.shape}')
 
-    particles, jets= utils.ReversePrep(particles,jets,mjj = utils.revert_mjj(logmjj),
+
+    particles, jets = utils.ReversePrep(particles,jets, mjj = utils.revert_mjj(logmjj),
                                        npart=flags.npart, norm=config['NORM'])
 
 
     feed_dict = {
-        'true': get_mjj(particles, jets),
-        'gen':  get_mjj(particles_gen, jets_gen)
-    }
+        'true': get_mjj(particles, jets),               # equal to exp(logmjj)
+        'gen':  get_mjj(particles_gen, jets_gen)        # close to exp(logmjj_g) if the model is good
+    }                                                   # logmjj does not have to be equal to logmjj_g
     
     fig,gs,_ = utils.HistRoutine(feed_dict,xlabel="mjj GeV",
-                                 binning=np.linspace(2300,5000,54),
+                                 binning=np.linspace(2800, 4200, 50),
                                  plot_ratio=True,
                                  reference_name='true',
                                  ylabel= 'Normalized entries',logy=True)
         
     fig.savefig('{}/mjj_{}.pdf'.format(flags.plot_folder,sample_name),bbox_inches='tight')
 
-    #Flatten and plot other features
+    # Flatten and plot other features
     
     jets = jets.reshape(-1,config['NUM_JET'])
     jets_gen = jets_gen.reshape(-1,config['NUM_JET'])

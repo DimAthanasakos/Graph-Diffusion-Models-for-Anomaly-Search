@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import argparse
 import h5py as h5
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+print()
 import utils
 import tensorflow as tf
 from deepsets_cond import DeepSetsClass
@@ -200,23 +202,24 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data_folder', default='/pscratch/sd/v/vmikuni/LHCO/', help='Folder containing data and MC files')    
+    parser.add_argument('--data_folder', default='/pscratch/sd/d/dimathan/LHCO/Data/', help='Folder containing data and MC files')    
     parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
     parser.add_argument('--file_name', default='processed_data_background_rel.h5', help='File to load')
     parser.add_argument('--test', action='store_true', default=False,help='Test if inverse transform returns original data')
     parser.add_argument('--npart', default=279, type=int, help='Maximum number of particles')
-    parser.add_argument('--config', default='config_jet.json', help='Training parameters')    
+    parser.add_argument('--config', default='config.yaml', help='Training parameters')    
     parser.add_argument('--SR', action='store_true', default=False,help='Load signal region background events')
     parser.add_argument('--hamb', action='store_true', default=False,help='Load Hamburg team dataset')
     parser.add_argument('--reweight', action='store_true', default=False,help='Apply mjj based reweighting to SR events')
     parser.add_argument('--nsig', type=int,default=2500,help='Number of injected signal events')
     parser.add_argument('--nbkg', type=int,default=100000,help='Number of injected signal events')
     parser.add_argument('--nid', type=int,default=0,help='Independent training ID')
-
+    parser.add_argument('--large', action='store_true', default=False,help='Train with a large model')
+    parser.add_argument('--data_file', default='', help='File to load')
     
     parser.add_argument('--LR', type=float,default=1e-4,help='learning rate')
-    parser.add_argument('--MAX-EPOCH', type=int,default=300,help='maximum number of epochs for the training')
-    parser.add_argument('--BATCH-SIZE', type=int,default=64,help='Batch size')
+    parser.add_argument('--MAX-EPOCH', type=int,default=5,help='maximum number of epochs for the training')
+    parser.add_argument('--BATCH-SIZE', type=int,default=128,help='Batch size')
 
     flags = parser.parse_args()
     config = utils.LoadJson(flags.config)
@@ -224,6 +227,7 @@ if __name__ == "__main__":
     BATCH_SIZE =flags.BATCH_SIZE
     LR = flags.LR
 
+    # load the data from LHCO (with signal, that depends on nsig)
     data_j,data_p,data_mjj,labels = class_loader(flags.data_folder,
                                                  flags.file_name,
                                                  npart=flags.npart,
@@ -236,6 +240,10 @@ if __name__ == "__main__":
 
     data_j,data_p,data_mjj = combine_part_jet(data_j,data_p,data_mjj,npart=flags.npart)
     sample_name = config['MODEL_NAME'] if flags.hamb==False else 'Hamburg'
+
+    if flags.large:
+        sample_name+='_large'
+
     if flags.test:sample_name = 'supervised'
     
     if flags.SR:
@@ -248,6 +256,7 @@ if __name__ == "__main__":
         bkg_p = bkg_p[hvd.rank()::hvd.size()]
         bkg_j = bkg_j[hvd.rank()::hvd.size()]
         bkg_mjj = bkg_mjj[hvd.rank()::hvd.size()]
+
     elif flags.hamb:
         with h5.File(os.path.join(flags.data_folder,'generated_data_datacond_both_jets.h5'),"r") as h5f:
             bkg_p = np.stack([
@@ -259,12 +268,16 @@ if __name__ == "__main__":
             npart = np.sum(bkg_p[:,:,:,0]>0,2)
             bkg_j[:,:,-1] = npart
             bkg_mjj = h5f['mjj'][hvd.rank()::hvd.size()]
-    else:
-        with h5.File(os.path.join(flags.data_folder,sample_name+'.h5'),"r") as h5f:
+            
+    else: # Load the generated data from plot_jet.py 
+        f = flags.data_file if flags.data_file else sample_name+'.h5'
+        if hvd.rank()==0: print(f'Loading {f}...')
+        with h5.File(os.path.join(flags.data_folder,f),"r") as h5f:
             bkg_p = h5f['particle_features'][hvd.rank()::hvd.size()]
             bkg_j = h5f['jet_features'][hvd.rank()::hvd.size()]
             bkg_mjj = h5f['mjj'][hvd.rank()::hvd.size()]
             
+
 
     data_size = int(bkg_j.shape[0] + data_j.shape[0])
     bkg_j,bkg_p,bkg_mjj = combine_part_jet(bkg_j,bkg_p,bkg_mjj,npart=flags.npart)
@@ -272,8 +285,10 @@ if __name__ == "__main__":
     bkg_j,bkg_p,bkg_mjj = apply_mjj_cut(bkg_j,bkg_p,bkg_mjj,flags.SR,
                                         mjjmin=config['MJJMIN'],mjjmax=config['MJJMAX'])
     
+
     if hvd.rank()==0:
         print("Loading {} generated samples and {} data samples".format(bkg_j.shape[0],data_j.shape[0]))
+
     semi_labels = np.concatenate([np.zeros(bkg_j.shape[0]),np.ones(data_j.shape[0])],0)
     sample_j = np.concatenate([bkg_j,data_j],0)
     sample_p = np.concatenate([bkg_p,data_p],0)

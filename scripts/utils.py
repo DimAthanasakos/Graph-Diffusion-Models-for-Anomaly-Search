@@ -214,12 +214,6 @@ def SimpleLoader(data_path,file_name,use_SR=False,
         mask = h5f['mask'][:]
         particles = np.concatenate([particles,mask],-1)
 
-    print()
-    print('SimpleLoader')
-    print(f'Particles shape: {particles.shape}')
-    print(f'Jets shape: {jets.shape}')
-    print()
-
 
     if not use_SR:
         #Load validation split
@@ -397,12 +391,11 @@ def DataLoader(data_path,file_name,
         particles = np.concatenate([particles,mask],-1)
 
     # print the analytics of the data
-    #if rank == 0:
-    #    print(f'nevts: {nevts}')
-    #    print(f'Particles shape: {particles.shape}')
-    #    print(f'Jets shape: {jets.shape}')
-    #    print(f'Mask shape: {mask.shape}')
-    #    print()
+    if rank == 0:
+        print(f'nevts: {nevts}')
+        print(f'Particles shape: {particles.shape}')
+        print(f'Jets shape: {jets.shape}')
+        print()
 
 
     p4_jets = ef.p4s_from_ptyphims(jets)
@@ -436,6 +429,9 @@ def DataLoader(data_path,file_name,
 
     particles, jets, mjj = shuffle(particles,jets,mjj, random_state=0)
     data_size = jets.shape[0]
+
+    if rank == 0:
+        print(f'After masking with use_SR: {use_SR} : data_size: {data_size}')
 
     particles,jets = _preprocessing(particles,jets,mjj)
 
