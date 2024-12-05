@@ -68,7 +68,7 @@ def SetStyle():
     
     import matplotlib.pyplot as plt
     import mplhep as hep
-    hep.set_style(hep.style.CMS)
+    hep.style.use(hep.style.CMS)
     
     # hep.style.use("CMS") 
 

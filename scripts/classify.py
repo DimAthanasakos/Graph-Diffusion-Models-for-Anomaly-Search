@@ -227,7 +227,7 @@ if __name__ == "__main__":
     BATCH_SIZE =flags.BATCH_SIZE
     LR = flags.LR
 
-    # load the data from LHCO (with signal, that depends on nsig)
+    # load the data from LHCO (with signal, that depends on nsig). The signal is labelled as 1, the background as 0
     data_j,data_p,data_mjj,labels = class_loader(flags.data_folder,
                                                  flags.file_name,
                                                  npart=flags.npart,
@@ -269,7 +269,7 @@ if __name__ == "__main__":
             bkg_j[:,:,-1] = npart
             bkg_mjj = h5f['mjj'][hvd.rank()::hvd.size()]
             
-    else: # Load the generated data from plot_jet.py 
+    else: # Load the generated background data from plot_jet.py 
         f = flags.data_file if flags.data_file else sample_name+'.h5'
         if hvd.rank()==0: print(f'Loading {f}...')
         with h5.File(os.path.join(flags.data_folder,f),"r") as h5f:
@@ -289,6 +289,7 @@ if __name__ == "__main__":
     if hvd.rank()==0:
         print("Loading {} generated samples and {} data samples".format(bkg_j.shape[0],data_j.shape[0]))
 
+    # semi_labels = 0 for generated background, 1 for data (including background + signal)
     semi_labels = np.concatenate([np.zeros(bkg_j.shape[0]),np.ones(data_j.shape[0])],0)
     sample_j = np.concatenate([bkg_j,data_j],0)
     sample_p = np.concatenate([bkg_p,data_p],0)
@@ -301,7 +302,7 @@ if __name__ == "__main__":
     compile(model,MAX_EPOCH,BATCH_SIZE,LR,int(0.9*data_size))
     callbacks = [hvd.callbacks.BroadcastGlobalVariablesCallback(0),
                  hvd.callbacks.MetricAverageCallback(),
-                 EarlyStopping(patience=50,restore_best_weights=True)]
+                 EarlyStopping(patience=7,restore_best_weights=True)]
 
     if hvd.rank()==0:
         if flags.SR:
@@ -347,8 +348,19 @@ if __name__ == "__main__":
               validation_steps=int(data_size*0.1/BATCH_SIZE)
               )
 
+    # The model has learned to differentiate between data (w/ and w/out signal and generated background)
+    # The whole point is that it learns something meaninful about the signal events, since bkg and gen bkg are very similar 
+
+
     if hvd.rank() == 0:
-        if flags.SR:
+        # As a x-check lets see how well it does in differentiating between data (w/ signal) and generated background
+        pred_data = model.predict([sample_j,sample_p,mask]) 
+        fpr_data, tpr_data, _ = roc_curve(semi_labels,pred_data, pos_label=1)
+        auc_res_data = auc(fpr_data, tpr_data)
+        print()
+        print("AUC on data (w/ signal) vs gen bkg: {}".format(auc_res_data))
+        print()
+        if flags.SR: # check if the model can differentiate between signal and real background
             pred = model.predict([data_j,data_p,data_p[:,:,:,0]!=0])
             fpr, tpr, _ = roc_curve(labels,pred, pos_label=1)            
             auc_res =auc(fpr, tpr)
